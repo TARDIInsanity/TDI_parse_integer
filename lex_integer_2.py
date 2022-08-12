@@ -12,6 +12,16 @@ BASES = {"0a":36, "0b":2, "0d":10, "0o":8, "0p":5, "0q":4, "0s":6, "0t":3, "0u":
 ALNUM = "".join(chr(i+48) for i in range(10))+"".join(chr(i+97) for i in range(26))
 ALDICTS = dict((base, dict((c, i) for i, c in enumerate(ALNUM[:base]))) for base in BASES.values())
 
+def pull_ide(code:str, allow_underscore:bool=True) -> (bool, str, str):
+    if not any(i.isalpha() or i == "_" for i in code[:1]):
+        return (False, "", code)
+    for index, char in enumerate(code):
+        if not (char.isalnum() or (allow_underscore and char == "_")):
+            break
+    else:
+        index += 1
+    return (index > 0, code[:index], code[index:])
+
 def get_int(code:str) -> int:
     if not code:
         return 0
@@ -57,8 +67,12 @@ class IntPuller:
         return SyntaxError(f"{name} separator {repr(char)} appeared at the end "
             "while parsing an int: {repr(segment)}")
     def pull_int(self, code:str) -> (bool, object, str):
-        if self.seps:
-            return self.sep_pull_int(code)
+        if self.single_seps:
+            if self.multi_seps:
+                return self.sep_pull_int(code)
+            return self.nomul_pull_int(code)
+        if self.multi_seps:
+            return self.nosing_pull_int(code)
         return self.nosep_pull_int(code)
     def nosep_pull_int(self, code:str) -> (bool, object, str):
         if not code[:1].isnumeric():
@@ -68,6 +82,50 @@ class IntPuller:
                 break
         try:
             result = get_int(code[:index])
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
+    def nomul_pull_int(self, code:str) -> (bool, object, str):
+        if not code[:1].isnumeric():
+            return (False, None, code)
+        single = False
+        for index, char in enumerate(code):
+            if char in self.single_seps:
+                if single:
+                    return (False, self.singlet_error(char, code[:index]), code)
+                single = True
+            elif char.isalnum():
+                single = False
+            else:
+                break
+        else:
+            index += 1
+        attempt = code[:index]
+        if single and not self.single_sep_suffix:
+            return (False, self.suffix_error(char, attempt, "singlet"), code)
+        try:
+            result = get_int("".join(i for i in attempt if i not in self.seps))
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
+    def nosing_pull_int(self, code:str) -> (bool, object, str):
+        if not code[:1].isnumeric():
+            return (False, None, code)
+        digit = False
+        for index, char in enumerate(code):
+            if char.isalnum():
+                digit = True
+            elif char in self.multi_seps:
+                digit = False
+            else:
+                break
+        else:
+            index += 1
+        attempt = code[:index]
+        if not (digit or self.multi_sep_suffix):
+            return (False, self.suffix_error(char, attempt, "multi"), code)
+        try:
+            result = get_int("".join(i for i in attempt if i not in self.seps))
             return (True, result, code[index:])
         except SyntaxError as e:
             return (False, e, code)
@@ -103,6 +161,42 @@ class IntPuller:
         except SyntaxError as e:
             return (False, e, code)
 
+def pull_string(code:str, opener:str, closer:str, escapes:(dict, sorted)) -> (bool, str, str):
+    # expects (opener) to be the detected opening sequence
+    # expects (closer) to be the appropriate closing sequence
+    # expects (escapes) to be a dict of first_char:sorted_dict pairs
+    # sorted_dicts should contain sequence:interpretation pairs
+    old = code
+    code = code[len(opener):]
+    clen = len(code)
+    result = []
+    index = 0
+    success = False
+    while index < clen:
+        char = code[index]
+        if char in escapes:
+            target = escapes[char]
+            segment = code[index:index+target[None][0]]
+            for length in target[None]:
+                segment = segment[index:index+length]
+                if segment in target[length]:
+                    result.append(code[:index]+target[length][segment])
+                    code = code[index+length:]
+                    clen -= index+length
+                    index = -1
+                    break
+        if closer.startswith(char) and code.count(closer, index, index+len(closer)):
+            result.append(code[:index])
+            code = code[index+len(closer):]
+            success = True
+            break
+        index += 1
+    else:
+        return (False, "", old)
+    if success:
+        return (success, "".join(result), code)
+    return (False, "", old)
+
 #########################
 # unrelated handy utils #
 #########################
@@ -136,4 +230,17 @@ def sorted_dict(vals:dict) -> dict:
         result[li][i] = vals[i]
     result[None] = sorted(result, reverse=True)
     return result
+
+pyth_openclose = {
+    chr(39):chr(39),
+    chr(34):chr(34),
+    chr(39)*3:chr(39)*3,
+    chr(34)*3:chr(34)*3,
+    }
+pyth_escape = {
+    "\\":sorted_dict({"\\\'":"\'", "\\\\":"\\", "\\n":"\n",
+                      "\\r":"\r", "\\t":"\t", "\\b":"\b",
+                      "\\f":"\f", "\\\n":"",
+                      })
+    }
 
