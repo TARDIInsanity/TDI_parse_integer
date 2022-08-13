@@ -244,3 +244,103 @@ pyth_escape = {
                       })
     }
 
+def gen_tab_tree_first_pass(code:str, feed:callable=lambda s: s.split("\n")) -> "list[(str[str.isspace], str)]":
+    '''splitting code by \n, turn "    ..." into ("    ", "...")
+    feed can be substituted with any function that returns an
+    iterable over the lines of the code.
+    '''
+    
+    temp = []
+    for line in feed(code):
+        index = 0
+        llen = len(line)
+        while index < llen and line[index].isspace():
+            index += 1
+        temp.append((line[:index], line[index:]))
+    return temp
+def gen_tab_tree_second_pass(code:"list[(str, str)]") -> "list[(int[abs], str)]":
+    '''taking output from first_pass, convert the spaces into >=0 integer depth measures.
+    ("   ", "a") -> (1, "a").
+    does not error for any particular space string in the (space, str) input pairs.'''
+    temp = code
+    index = 0
+    tlen = len(temp)-1
+    buffer = [(0, temp[0][1])]
+    while index < tlen:
+        index += 1
+        a, b = temp[index-1][0], temp[index][0]
+        if b.startswith(a):
+            depth = buffer[-1][0] + (b != a)
+            buffer.append((depth, temp[index][1]))
+            continue
+        j = index-1
+        while j >= 0:
+            if temp[j][0] == b:
+                depth = buffer[j][0]
+                buffer.append((depth, temp[index][1]))
+                break
+            j -= 1
+        else:
+            raise IndentationError(f"line {index} in code sample ~ {temp[index]}")
+    return buffer
+def gen_tab_tree_third_pass(code:"list[(int[abs], str)]") -> dict:
+    '''expecting (int>=0, str) pairs, nest items.'''
+    buffer = code
+    nest = [{"depth":-1, "name":None, "block":[]}]
+    #nest = [{None:0}]
+    def pop_level():
+        siblings = nest.pop(-1)
+        nest[-1]["block"].append(siblings)
+        # nest[-1][nest[-1][True]] = siblings
+    while buffer:
+        depth, name = buffer.pop(0)
+        if depth > nest[-1]["depth"]:
+            nest.append({"depth":depth, "name":name, "block":[]})
+        # if depth > nest[-1][None]:
+        #     nest.append({None:depth, True:name, name:{}})
+            continue
+        while nest[-1]["depth"] > depth:
+            pop_level()
+        # while nest[-1][None] > depth:
+        #     pop_level()
+        if depth == nest[-1]["depth"]:
+            pop_level()
+            nest.append({"depth":depth, "name":name, "block":[]})
+        # if depth == nest[-1][None]:
+        #     nest[-1][True] = name
+        #     nest[-1][name] = {}
+        #     continue
+        raise IndentationError("unindent does not match any outer indentation level")
+    while len(nest) > 1:
+        pop_level()
+    return nest[0]
+def generate_tab_tree(code:str) -> dict:
+    # generate a tree according to python's indentation rules
+    temp = gen_tab_tree_first_pass(code)
+    buffer = gen_tab_tree_second_pass(temp)
+    nesting = gen_tab_tree_third_pass(buffer)
+    return nesting
+def gen_exception_util(nesting:dict, parent:object=BaseException):
+    classes = {}
+    for tree in nesting["block"]:
+        if not str.isidentifier(tree['name']):
+            raise ValueError(("requires an identifier", tree['name']))
+        exec("\n".join((
+            f"class {tree['name']}(parent):",
+            "    pass",
+            f"classes[tree['name']] = {tree['name']}"
+            )))
+        classes.update(gen_exception_util(tree, classes[tree['name']]))
+    return classes
+def generate_exceptions(code:str) -> dict:
+    '''expects input of the following form:
+    "\n".join((
+    "BaseException",
+    "    KeyboardInterrupt",
+    "    Exception",
+    "        ArithmeticError",
+    "            ZeroDivisionError",
+    "        AssertionError"))'''
+    nesting = generate_tab_tree(code)
+    exceptions = gen_exception_util(nesting)
+    return exceptions
