@@ -5,7 +5,7 @@ Created on Fri Jul  1 18:11:05 2022
 @author: github.com/TARDIInsanity
 """
 
-__version__ = "2.0"
+__version__ = "2.3"
 
 # all bases must begin with numeric sequences, and not begin with other base headers
 BASES = {"0a":36, "0b":2, "0d":10, "0o":8, "0p":5, "0q":4, "0s":6, "0t":3, "0u":1, "0v":20, "0x":16}
@@ -244,12 +244,13 @@ pyth_escape = {
                       })
     }
 
-def gen_tab_tree_first_pass(code:str, feed:callable=lambda s: s.split("\n")) -> "list[(str[str.isspace], str)]":
+def gen_tab_tree_first_pass(code:str, feed:callable=None) -> "list[(str[str.isspace], str)]":
     '''splitting code by \n, turn "    ..." into ("    ", "...")
     feed can be substituted with any function that returns an
     iterable over the lines of the code.
     '''
-    
+    if feed is None:
+        feed = lambda s: s.split("\n")
     temp = []
     for line in feed(code):
         index = 0
@@ -306,6 +307,7 @@ def gen_tab_tree_third_pass(code:"list[(int[abs], str)]") -> dict:
         if depth == nest[-1]["depth"]:
             pop_level()
             nest.append({"depth":depth, "name":name, "block":[]})
+            continue
         # if depth == nest[-1][None]:
         #     nest[-1][True] = name
         #     nest[-1][name] = {}
@@ -314,13 +316,13 @@ def gen_tab_tree_third_pass(code:"list[(int[abs], str)]") -> dict:
     while len(nest) > 1:
         pop_level()
     return nest[0]
-def generate_tab_tree(code:str) -> dict:
+def generate_tab_tree(code:str, feed=None) -> dict:
     # generate a tree according to python's indentation rules
-    temp = gen_tab_tree_first_pass(code)
+    temp = gen_tab_tree_first_pass(code, feed)
     buffer = gen_tab_tree_second_pass(temp)
     nesting = gen_tab_tree_third_pass(buffer)
     return nesting
-def gen_exception_util(nesting:dict, parent:object=BaseException):
+def gen_exception_util(nesting:dict, parent:type=BaseException):
     classes = {}
     for tree in nesting["block"]:
         if not str.isidentifier(tree['name']):
@@ -332,7 +334,7 @@ def gen_exception_util(nesting:dict, parent:object=BaseException):
             )))
         classes.update(gen_exception_util(tree, classes[tree['name']]))
     return classes
-def generate_exceptions(code:str) -> dict:
+def generate_classes(base_class:type, code:str, feed=None) -> dict:
     '''expects input of the following form:
     "\n".join((
     "BaseException",
@@ -341,6 +343,13 @@ def generate_exceptions(code:str) -> dict:
     "        ArithmeticError",
     "            ZeroDivisionError",
     "        AssertionError"))'''
-    nesting = generate_tab_tree(code)
-    exceptions = gen_exception_util(nesting)
+    nesting = generate_tab_tree(code, feed)
+    exceptions = gen_exception_util(nesting, base_class)
     return exceptions
+
+def ignore_iterator(iterator:iter):
+    try:
+        while True:
+            next(iterator)
+    except StopIteration as e:
+        return e.value
