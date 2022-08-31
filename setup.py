@@ -2,7 +2,7 @@
 """
 Created on Fri Aug  5 19:44:44 2022
 
-@author: Ryan
+@author: github.com/TARDIInsanity
 """
 
 from setuptools import setup
