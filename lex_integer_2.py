@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Jul  1 18:11:05 2022
+Floats added Wed Sep  9  8:34 2022
 
 @author: github.com/TARDIInsanity
 """
 
-__version__ = "2.3"
+__version__ = "2.4"
 
 # all bases must begin with numeric sequences, and not begin with other base headers
 BASES = {"0a":36, "0b":2, "0d":10, "0o":8, "0p":5, "0q":4, "0s":6, "0t":3, "0u":1, "0v":20, "0x":16}
@@ -37,6 +38,7 @@ def get_int(code:str) -> int:
         if set(code) - {"1"}: # if the set of chars in the integer that aren't '1' is non-empty...
             raise SyntaxError("Unexpected chars when processing integer in base 1: "+key+code)
         return clen
+    '''
     quick = ALDICTS[base]
     result = 0
     while index < clen:
@@ -47,9 +49,15 @@ def get_int(code:str) -> int:
             raise SyntaxError(f"Unexpected chars when processing integer in base {base}"+
                               (f" (valid portion: {key}{code[:index]})" if index else "")+
                               f": {code[index:]}")
-    return int(code, base=base)
+    '''
+    try:
+        return int(code, base=base)
+    except ValueError as e:
+        raise SyntaxError(e)
 
 class IntPuller:
+    valid_char = staticmethod(str.isalnum)
+    convert = staticmethod(get_int)
     def __init__(self,
                  single_seps:set=(), multi_seps:set=(),
                  single_sep_suffix:bool=False, multi_sep_suffix:bool=False):
@@ -75,18 +83,20 @@ class IntPuller:
             return self.nosing_pull_int(code)
         return self.nosep_pull_int(code)
     def nosep_pull_int(self, code:str) -> (bool, object, str):
-        if not code[:1].isnumeric():
+        if not self.valid_char(code[:1]):
             return (False, None, code)
         for index, char in enumerate(code):
             if not char.isalnum():
                 break
+        else:
+            index += 1
         try:
-            result = get_int(code[:index])
+            result = self.convert(code[:index])
             return (True, result, code[index:])
         except SyntaxError as e:
             return (False, e, code)
     def nomul_pull_int(self, code:str) -> (bool, object, str):
-        if not code[:1].isnumeric():
+        if not self.valid_char(code[:1]):
             return (False, None, code)
         single = False
         for index, char in enumerate(code):
@@ -104,12 +114,12 @@ class IntPuller:
         if single and not self.single_sep_suffix:
             return (False, self.suffix_error(char, attempt, "singlet"), code)
         try:
-            result = get_int("".join(i for i in attempt if i not in self.seps))
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
             return (True, result, code[index:])
         except SyntaxError as e:
             return (False, e, code)
     def nosing_pull_int(self, code:str) -> (bool, object, str):
-        if not code[:1].isnumeric():
+        if not self.valid_char(code[:1]):
             return (False, None, code)
         digit = False
         for index, char in enumerate(code):
@@ -125,12 +135,12 @@ class IntPuller:
         if not (digit or self.multi_sep_suffix):
             return (False, self.suffix_error(char, attempt, "multi"), code)
         try:
-            result = get_int("".join(i for i in attempt if i not in self.seps))
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
             return (True, result, code[index:])
         except SyntaxError as e:
             return (False, e, code)
     def sep_pull_int(self, code:str) -> (bool, object, str):
-        if not code[:1].isnumeric():
+        if not self.valid_char(code[:1]):
             return (False, None, code)
         single = False
         digit = False
@@ -156,7 +166,7 @@ class IntPuller:
         if not (single or digit) and not self.multi_sep_suffix:
             return (False, self.suffix_error(char, attempt, "multi"), code)
         try:
-            result = get_int("".join(i for i in attempt if i not in self.seps))
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
             return (True, result, code[index:])
         except SyntaxError as e:
             return (False, e, code)
@@ -196,6 +206,172 @@ def pull_string(code:str, opener:str, closer:str, escapes:(dict, sorted)) -> (bo
     if success:
         return (success, "".join(result), code)
     return (False, "", old)
+
+def convert_to_float(code:str) -> int:
+    '''assumes a string containing exactly one ., without which it would be a valid integer.'''
+    if not code:
+        return 0
+    original = code
+    base = BASES.get(code[:2], 10)
+    left, code = code.split(".")
+    integral = get_int(left)
+    if base == 10:
+        return integral+float("."+code)
+    clen = len(code)
+    if base == 1:
+        if set(code) - {"1"}: # if the set of chars in the float that aren't '1' is non-empty...
+            raise SyntaxError("Unexpected chars when processing float in base 1: "+original)
+        return float(integral+clen)
+    result = 0
+    d = ALDICTS[base]
+    for i in reversed(code):
+        result = (result+d[i])/base
+    return integral + result
+
+class FloatPuller:
+    @staticmethod
+    def valid_char(char:str):
+        return char.isalnum() or char == "."
+    convert = staticmethod(convert_to_float)
+    def __init__(self,
+                 single_seps:set=(), multi_seps:set=(),
+                 single_sep_suffix:bool=False, multi_sep_suffix:bool=False):
+        self.single_seps = set(single_seps)
+        self.multi_seps = set(multi_seps)
+        self.seps = self.single_seps.union(self.multi_seps)
+        self.single_sep_suffix = single_sep_suffix
+        self.multi_sep_suffix = multi_sep_suffix
+    @staticmethod
+    def singlet_error(char:str, segment:str) -> SyntaxError:
+        return SyntaxError(f"multiple singlet separators {repr(char)} appeared "
+            "in a row while parsing a float: {repr(segment)}")
+    @staticmethod
+    def suffix_error(char:str, segment:str, name:str) -> SyntaxError:
+        return SyntaxError(f"{name} separator {repr(char)} appeared at the end "
+            "while parsing a float: {repr(segment)}")
+    def pull_float(self, code:str) -> (bool, object, str):
+        if self.single_seps:
+            if self.multi_seps:
+                return self.sep_pull_float(code)
+            return self.nomul_pull_float(code)
+        if self.multi_seps:
+            return self.nosing_pull_float(code)
+        return self.nosep_pull_float(code)
+    def nosep_pull_float(self, code:str) -> (bool, object, str):
+        if not self.valid_char(code[:1]):
+            return (False, None, code)
+        dot = False
+        for index, char in enumerate(code):
+            if char == ".":
+                if dot:
+                    break
+                dot = True
+                continue
+            if not char.isalnum():
+                break
+        else:
+            index += 1
+        try:
+            result = self.convert(code[:index])
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
+    def nomul_pull_float(self, code:str) -> (bool, object, str):
+        if not self.valid_char(code[:1]):
+            return (False, None, code)
+        single = False
+        dot = False
+        for index, char in enumerate(code):
+            if char == ".":
+                if dot:
+                    break
+                dot = True
+                single = False
+                continue
+            if char in self.single_seps:
+                if single:
+                    return (False, self.singlet_error(char, code[:index]), code)
+                single = True
+            elif char.isalnum():
+                single = False
+            else:
+                break
+        else:
+            index += 1
+        attempt = code[:index]
+        if single and not self.single_sep_suffix:
+            return (False, self.suffix_error(char, attempt, "singlet"), code)
+        try:
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
+    def nosing_pull_float(self, code:str) -> (bool, object, str):
+        if not self.valid_char(code[:1]):
+            return (False, None, code)
+        digit = False
+        dot = False
+        for index, char in enumerate(code):
+            if char == ".":
+                if dot:
+                    break
+                dot = True
+                digit = True
+                continue
+            if char.isalnum():
+                digit = True
+            elif char in self.multi_seps:
+                digit = False
+            else:
+                break
+        else:
+            index += 1
+        attempt = code[:index]
+        if not (digit or self.multi_sep_suffix):
+            return (False, self.suffix_error(char, attempt, "multi"), code)
+        try:
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
+    def sep_pull_float(self, code:str) -> (bool, object, str):
+        if not self.valid_char(code[:1]):
+            return (False, None, code)
+        single = False
+        digit = False
+        dot = False
+        for index, char in enumerate(code):
+            if char == ".":
+                if dot:
+                    break
+                dot = True
+                digit = True
+                single = False
+            if char in self.single_seps:
+                if single:
+                    return (False, self.singlet_error(char, code[:index]), code)
+                single = True
+                digit = False
+            elif char.isalnum():
+                single = False
+                digit = True
+            elif char in self.multi_seps:
+                single = False
+                digit = False
+            else:
+                break
+        else:
+            index += 1
+        attempt = code[:index]
+        if single and not self.single_sep_suffix:
+            return (False, self.suffix_error(char, attempt, "singlet"), code)
+        if not (single or digit) and not self.multi_sep_suffix:
+            return (False, self.suffix_error(char, attempt, "multi"), code)
+        try:
+            result = self.convert("".join(i for i in attempt if i not in self.seps))
+            return (True, result, code[index:])
+        except SyntaxError as e:
+            return (False, e, code)
 
 #########################
 # unrelated handy utils #
@@ -238,9 +414,9 @@ pyth_openclose = {
     chr(34)*3:chr(34)*3,
     }
 pyth_escape = {
-    "\\":sorted_dict({"\\\'":"\'", "\\\\":"\\", "\\n":"\n",
-                      "\\r":"\r", "\\t":"\t", "\\b":"\b",
-                      "\\f":"\f", "\\\n":"",
+    "\\":sorted_dict({"\\\'":"\'", "\\\"":"\"", "\\\\":"\\",
+                      "\\n":"\n", "\\r":"\r", "\\t":"\t",
+                      "\\b":"\b", "\\f":"\f", "\\\n":"",
                       })
     }
 
